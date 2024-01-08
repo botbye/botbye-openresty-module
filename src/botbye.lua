@@ -64,7 +64,7 @@ local function callBotbye(body, headers)
       ngx.log(ngx.ERR, "[BotBye] Request failed while connecting to the API: ", err, ".")
     end
     return {
-      result = { isBot = false },
+      result = { isBot = false, banRequired = false },
       reqId = ngx.var.reqId,
       error = ngx.null
     }
