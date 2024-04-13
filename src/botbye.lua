@@ -1,13 +1,14 @@
 local constants = {
   path = "/validate-request/v1",
-  module_version = "0.0.1",
+  pathV2 = "/validate-request/v2",
+  module_version = "0.0.4",
   module_name = "OpenResty",
 }
 
 local conf = {
   botbye_server_key = "",
   botbye_endpoint = "",
-  botbye_connection_timeout = 5000,
+  botbye_connection_timeout = 1000,
 }
 
 local M = {}
@@ -44,18 +45,52 @@ local function getBody(token, custom_fields)
   return require("cjson").encode(visitor)
 end
 
-local function callBotbye(body, headers)
+local function encode_uri_char(char)
+  return string.format('%%%0X', string.byte(char))
+end
+
+local function encode_uri(uri)
+  return (string.gsub(uri, "[^%a%d%-_%.!~%*'%(%);/%?:@&=%+%$,#]", encode_uri_char))
+end
+
+
+local function callBotbyeV2(token, params)
+  local httpc = require("resty.http").new()
+  httpc:set_timeout(conf.botbye_connection_timeout)
+
+  return httpc:request_uri(conf.botbye_endpoint .. constants.pathV2 .. "?" .. encode_uri(token), params)
+end
+
+local function callBotbyeV1(params)
+  local httpc = require("resty.http").new()
+  httpc:set_timeout(conf.botbye_connection_timeout)
+
+  return httpc:request_uri(conf.botbye_endpoint .. constants.path, params)
+end
+
+function M.validateRequest(token, custom_fields)
+  local body = getBody(token, custom_fields)
+
+  local botbye_headers = {
+    Connection = "keep-alive",
+    ["Content-Type"] = "application/json",
+    ["Module-Name"] = constants.module_name,
+    ["Module-Version"] = constants.module_version,
+  }
+
   local params = {
     method = "POST",
     keep_alive = true,
     body = body,
-    headers = headers
+    headers = botbye_headers
   }
 
-  local httpc = require("resty.http").new()
-  httpc:set_timeout(conf.botbye_connection_timeout)
-
-  local res, err = httpc:request_uri(conf.botbye_endpoint .. constants.path, params)
+  local res, err
+  if token and string.sub(token, 1, 9) == "visitorId" then
+    res, err = callBotbyeV2(token, params)
+  else
+    res, err = callBotbyeV1(params)
+  end
 
   if err ~= nil then
     if err == "timeout" then
@@ -71,19 +106,6 @@ local function callBotbye(body, headers)
   end
 
   return require("cjson").decode(res.body)
-end
-
-function M.validateRequest(token, custom_fields)
-  local body = getBody(token, custom_fields)
-
-  local botbye_headers = {
-    Connection = "keep-alive",
-    ["Content-Type"] = "application/json",
-    ["Module-Name"] = constants.module_name,
-    ["Module-Version"] = constants.module_version,
-  }
-
-  return callBotbye(body, botbye_headers)
 end
 
 function M.setConf(input_conf)
