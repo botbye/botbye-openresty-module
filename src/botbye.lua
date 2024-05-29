@@ -1,7 +1,7 @@
 local constants = {
   path = "/validate-request/v1",
   pathV2 = "/validate-request/v2",
-  module_version = "0.0.4",
+  module_version = "0.0.5",
   module_name = "OpenResty",
 }
 
@@ -12,6 +12,22 @@ local conf = {
 }
 
 local M = {}
+
+local function safe_decode(json_string)
+  local success, decoded_json = pcall(require("cjson").decode, json_string)
+  if success then
+    return decoded_json
+  else
+    local err_message = "[BotBye] Request failed while connecting to the API, response: " .. (json_string or "-") .. ".Request skipped."
+    ngx.log(ngx.ERR, err_message)
+
+    return {
+      result = { isAllowed = true },
+      reqId = ngx.var.reqId or '00000000-0000-0000-0000-000000000000',
+      error = { message = err_message }
+    }
+  end
+end
 
 local function getHeaders(headers)
   for key, value in pairs(headers) do
@@ -31,7 +47,6 @@ local function getBody(token, custom_fields)
     request_uri = ngx.var.request_uri,
     created_at = ngx.now(),
     server_port = ngx.var.server_port,
-    cookie = ngx.var.http_cookie,
   }
 
   local visitor = {
@@ -92,20 +107,25 @@ function M.validateRequest(token, custom_fields)
     res, err = callBotbyeV1(params)
   end
 
-  if err ~= nil then
+  if res.status >= 404 then
+    local err_message
+
     if err == "timeout" then
-      ngx.log(ngx.ERR, "[BotBye] API connection timed out, request skipped")
+      err_message = "[BotBye] API connection timed out, request skipped"
+      ngx.log(ngx.ERR, err_message)
     else
-      ngx.log(ngx.ERR, "[BotBye] Request failed while connecting to the API: ", err, ".")
+      err_message = "[BotBye] Request failed while connecting to the API: " .. (err or res.status or "-") .. ". Request skipped."
+      ngx.log(ngx.ERR, err_message)
     end
+
     return {
       result = { isAllowed = true },
-      reqId = ngx.var.reqId,
-      error = ngx.null
+      reqId = ngx.var.reqId or '00000000-0000-0000-0000-000000000000',
+      error = { message = err_message }
     }
   end
 
-  return require("cjson").decode(res.body)
+  return safe_decode(res.body)
 end
 
 function M.setConf(input_conf)
