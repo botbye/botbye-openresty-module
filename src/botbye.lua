@@ -1,7 +1,6 @@
 local constants = {
-  path = "/validate-request/v1",
   pathV2 = "/validate-request/v2",
-  module_version = "0.0.5",
+  module_version = "0.0.6",
   module_name = "OpenResty",
 }
 
@@ -68,19 +67,11 @@ local function encode_uri(uri)
   return (string.gsub(uri, "[^%a%d%-_%.!~%*'%(%);/%?:@&=%+%$,#]", encode_uri_char))
 end
 
-
 local function callBotbyeV2(token, params)
   local httpc = require("resty.http").new()
   httpc:set_timeout(conf.botbye_connection_timeout)
 
   return httpc:request_uri(conf.botbye_endpoint .. constants.pathV2 .. "?" .. encode_uri(token), params)
-end
-
-local function callBotbyeV1(params)
-  local httpc = require("resty.http").new()
-  httpc:set_timeout(conf.botbye_connection_timeout)
-
-  return httpc:request_uri(conf.botbye_endpoint .. constants.path, params)
 end
 
 function M.validateRequest(token, custom_fields)
@@ -100,12 +91,7 @@ function M.validateRequest(token, custom_fields)
     headers = botbye_headers
   }
 
-  local res, err
-  if token and string.sub(token, 1, 9) == "visitorId" then
-    res, err = callBotbyeV2(token, params)
-  else
-    res, err = callBotbyeV1(params)
-  end
+  local res, err = callBotbyeV2(token, params)
 
   if res.status >= 404 then
     local err_message
