@@ -1,6 +1,6 @@
 local constants = {
   pathV2 = "/validate-request/v2",
-  module_version = "0.0.6",
+  module_version = "0.0.7",
   module_name = "OpenResty",
 }
 
