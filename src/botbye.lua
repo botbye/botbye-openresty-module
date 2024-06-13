@@ -1,32 +1,19 @@
 local constants = {
   pathV2 = "/validate-request/v2",
-  module_version = "0.0.7",
+  module_version = "0.0.8",
   module_name = "OpenResty",
 }
 
 local conf = {
   botbye_server_key = "",
-  botbye_endpoint = "",
+  botbye_endpoint = "https://api.botbye.com",
   botbye_connection_timeout = 1000,
 }
 
+local cjson_safe = require("cjson.safe")
+local cjson = require("cjson")
+
 local M = {}
-
-local function safe_decode(json_string)
-  local success, decoded_json = pcall(require("cjson").decode, json_string)
-  if success then
-    return decoded_json
-  else
-    local err_message = "[BotBye] Request failed while connecting to the API, response: " .. (json_string or "-") .. ".Request skipped."
-    ngx.log(ngx.ERR, err_message)
-
-    return {
-      result = { isAllowed = true },
-      reqId = ngx.var.reqId or '00000000-0000-0000-0000-000000000000',
-      error = { message = err_message }
-    }
-  end
-end
 
 local function getHeaders(headers)
   for key, value in pairs(headers) do
@@ -49,14 +36,14 @@ local function getBody(token, custom_fields)
   }
 
   local visitor = {
-    token = token,
+    token = token or 'token missing',
     server_key = conf["botbye_server_key"],
     headers = getHeaders(ngx.req.get_headers()),
     request_info = request_infos,
     custom_fields = custom_fields
   }
 
-  return require("cjson").encode(visitor)
+  return cjson.encode(visitor)
 end
 
 local function encode_uri_char(char)
@@ -71,7 +58,11 @@ local function callBotbyeV2(token, params)
   local httpc = require("resty.http").new()
   httpc:set_timeout(conf.botbye_connection_timeout)
 
-  return httpc:request_uri(conf.botbye_endpoint .. constants.pathV2 .. "?" .. encode_uri(token), params)
+  local res, err = httpc:request_uri(conf.botbye_endpoint .. constants.pathV2 .. "?" .. encode_uri(token), params)
+
+  httpc:set_keepalive()
+
+  return res, err
 end
 
 function M.validateRequest(token, custom_fields)
@@ -111,7 +102,19 @@ function M.validateRequest(token, custom_fields)
     }
   end
 
-  return safe_decode(res.body)
+  res, err = cjson_safe.decode(res.body)
+  if not res then
+    local err_message = "[BotBye] Request failed while connecting to the API, response: " .. err .. ".Request skipped."
+    ngx.log(ngx.ERR, err_message)
+
+    return {
+      result = { isAllowed = true },
+      reqId = ngx.var.reqId or '00000000-0000-0000-0000-000000000000',
+      error = { message = err_message }
+    }
+  end
+
+  return res
 end
 
 function M.setConf(input_conf)
