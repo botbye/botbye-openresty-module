@@ -1,6 +1,6 @@
 local constants = {
   pathV2 = "/validate-request/v2",
-  module_version = "0.0.8",
+  module_version = "0.0.9",
   module_name = "OpenResty",
 }
 
@@ -84,7 +84,7 @@ function M.validateRequest(token, custom_fields)
 
   local res, err = callBotbyeV2(token, params)
 
-  if res.status >= 404 then
+  if not res or res.status >= 404 then
     local err_message
 
     if err == "timeout" then
