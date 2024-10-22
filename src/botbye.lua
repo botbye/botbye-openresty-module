@@ -1,6 +1,6 @@
 local constants = {
   pathV2 = "/validate-request/v2",
-  module_version = "0.0.9",
+  module_version = "0.0.10",
   module_name = "OpenResty",
 }
 
@@ -28,11 +28,8 @@ end
 local function getBody(token, custom_fields)
   local request_infos = {
     remote_addr = ngx.var.remote_addr,
-    server_name = ngx.var.server_name,
     request_method = ngx.var.request_method,
     request_uri = ngx.var.request_uri,
-    created_at = ngx.now(),
-    server_port = ngx.var.server_port,
   }
 
   local visitor = {
