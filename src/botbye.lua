@@ -1,12 +1,12 @@
 local constants = {
   pathV2 = "/validate-request/v2",
-  module_version = "0.0.10",
+  module_version = "0.0.11",
   module_name = "OpenResty",
 }
 
 local conf = {
   botbye_server_key = "",
-  botbye_endpoint = "https://api.botbye.com",
+  botbye_endpoint = "https://verify.botbye.com",
   botbye_connection_timeout = 1000,
 }
 
