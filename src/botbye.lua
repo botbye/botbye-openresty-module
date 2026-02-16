@@ -167,8 +167,24 @@ function M.setConf(input_conf)
 
     conf[k] = v
   end
+end
 
+function M.initRequest()
   if ngx.worker.id() == 0 then
+    local dict = ngx.shared and ngx.shared.botbye_state
+    if not dict then
+      ngx.log(ngx.WARN, "[BotBye] shared dict 'botbye_state' not configured, skipping init guard")
+      return
+    end
+
+    local ok, err = dict:add("botbye:init_done", true)
+    if ok ~= true then
+      if ok == nil and err ~= nil then
+        ngx.log(ngx.WARN, "[BotBye] init-request shared dict error: " .. tostring(err))
+      end
+      return
+    end
+
     ngx.timer.at(0, function(premature)
       if premature then return end
       initRequest()
