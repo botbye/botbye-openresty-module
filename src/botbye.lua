@@ -1,6 +1,6 @@
 local constants = {
   pathV2 = "/validate-request/v2",
-  module_version = "0.0.12",
+  module_version = "0.0.14",
   module_name = "OpenResty",
 }
 
@@ -114,7 +114,6 @@ function M.validateRequest(token, custom_fields)
   return res
 end
 
-
 local function initRequest()
   ngx.log(ngx.INFO, "[BotBye] init-request: starting")
 
@@ -162,6 +161,10 @@ end
 
 function M.setConf(input_conf)
   for k, v in pairs(input_conf) do
+    if v == nil or (type(v) == "string" and v:match("^%s*$")) then
+      error(k..' can\'t be nil or blank.')
+    end
+
     conf[k] = v
   end
 
