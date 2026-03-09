@@ -37,7 +37,6 @@ function M.fetchImage(origin, image_id)
 
   local originValue = origin or "origin is missing"
   
-  -- Build URL with query parameters
   local queryParams = {}
   if image_id then
     table.insert(queryParams, "image_id=" .. ngx.escape_uri(image_id))
