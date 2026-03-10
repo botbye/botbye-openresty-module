@@ -1,5 +1,5 @@
 local conf = {
-  endpoint = "",
+  endpoint = "https://verify.botbye.com",
   account_id = "",
   project_id = "",
   api_key = "",
