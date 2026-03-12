@@ -7,6 +7,7 @@ local conf = {
 }
 
 local M = {}
+local botbye_http = require("botbye_http")
 
 local function assertNotBlank(key, value)
   if value == nil or (type(value) == "string" and value:match("^%s*$")) then
@@ -49,19 +50,14 @@ function M.fetchImage(origin, image_id)
     url = url .. "?" .. table.concat(queryParams, "&")
   end
 
-  local httpc = require("resty.http").new()
-  httpc:set_timeout(conf.connection_timeout)
-
-  local res, err = httpc:request_uri(url, {
+  local res, err = botbye_http.request_uri(url, {
     method = "GET",
     keep_alive = true,
     headers = {
       ["X-Api-Key"] = conf.api_key,
       ["Origin"] = originValue,
     },
-  })
-
-  httpc:set_keepalive()
+  }, conf.connection_timeout)
 
   return res, err
 end

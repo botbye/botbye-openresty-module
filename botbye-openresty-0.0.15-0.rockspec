@@ -20,6 +20,7 @@ build = {
   type = "builtin",
   modules = {
     botbye = "src/botbye.lua",
+    botbye_http = "src/botbye_http.lua",
     botbye_phishing = "src/botbye_phishing.lua",
   },
 }

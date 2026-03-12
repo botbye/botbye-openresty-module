@@ -12,6 +12,7 @@ local conf = {
 
 local cjson_safe = require("cjson.safe")
 local cjson = require("cjson")
+local botbye_http = require("botbye_http")
 
 local M = {}
 
@@ -52,14 +53,11 @@ local function encode_uri(uri)
 end
 
 local function callBotbyeV2(token, params)
-  local httpc = require("resty.http").new()
-  httpc:set_timeout(conf.botbye_connection_timeout)
-
-  local res, err = httpc:request_uri(conf.botbye_endpoint .. constants.pathV2 .. "?" .. encode_uri(token), params)
-
-  httpc:set_keepalive()
-
-  return res, err
+  return botbye_http.request_uri(
+    conf.botbye_endpoint .. constants.pathV2 .. "?" .. encode_uri(token),
+    params,
+    conf.botbye_connection_timeout
+  )
 end
 
 function M.validateRequest(token, custom_fields)
@@ -117,15 +115,12 @@ end
 local function initRequest()
   ngx.log(ngx.INFO, "[BotBye] init-request: starting")
 
-  local httpc = require("resty.http").new()
-  httpc:set_timeout(conf.botbye_connection_timeout)
-
   local url = conf.botbye_endpoint:gsub("/+$", "") .. "/init-request/v1"
   local body = cjson.encode({ serverKey = conf.botbye_server_key })
   ngx.log(ngx.INFO, "[BotBye] init-request: url = " .. url)
   ngx.log(ngx.INFO, "[BotBye] init-request: body = " .. body)
 
-  local res, err = httpc:request_uri(url, {
+  local res, err = botbye_http.request_uri(url, {
     method = "POST",
     body = body,
     headers = {
@@ -134,9 +129,7 @@ local function initRequest()
       ["Module-Version"] = constants.module_version,
       ["X-Botbye-Server-Key"] = conf.botbye_server_key,
     },
-  })
-
-  httpc:set_keepalive()
+  }, conf.botbye_connection_timeout)
 
   if not res then
     ngx.log(ngx.WARN, "[BotBye] init-request failed: " .. (err or "unknown error"))
