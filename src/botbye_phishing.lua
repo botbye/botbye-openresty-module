@@ -15,51 +15,44 @@ local function assertNotBlank(key, value)
   end
 end
 
-local function normalizeBaseUrl(url)
-  return (url or ""):gsub("/+$", "")
+local image_base_url
+
+local function rebuildDerivedState()
+  local base = (conf.endpoint or ""):gsub("/+$", "")
+  image_base_url = base .. "/api/v1/phishing/" .. conf.account_id
+    .. "/projects/" .. conf.project_id .. "/image"
 end
 
-local function buildPhishingUrl(pathAndQuery)
-  local base = normalizeBaseUrl(conf.endpoint)
-  return base .. pathAndQuery
-end
+local reusable_params = {
+  method = "GET",
+  keep_alive = true,
+  headers = {
+    ["X-Api-Key"] = "",
+    ["Origin"] = nil,
+  },
+}
 
 function M.setConf(input_conf)
   for k, v in pairs(input_conf) do
     assertNotBlank(k, v)
     conf[k] = v
   end
+
+  rebuildDerivedState()
+  reusable_params.headers["X-Api-Key"] = conf.api_key
 end
 
 function M.fetchImage(origin, image_id)
-  local url = buildPhishingUrl(
-    "/api/v1/phishing/" .. conf.account_id .. "/projects/" .. conf.project_id .. "/image"
-  )
-
-  local originValue = origin or "origin is missing"
-  
-  local queryParams = {}
+  local url
   if image_id then
-    table.insert(queryParams, "image_id=" .. ngx.escape_uri(image_id))
-    table.insert(queryParams, "format=svg")
+    url = image_base_url .. "?image_id=" .. ngx.escape_uri(image_id) .. "&format=svg"
   else
-    table.insert(queryParams, "format=png")
-  end
-  
-  if #queryParams > 0 then
-    url = url .. "?" .. table.concat(queryParams, "&")
+    url = image_base_url .. "?format=png"
   end
 
-  local res, err = botbye_http.request_uri(url, {
-    method = "GET",
-    keep_alive = true,
-    headers = {
-      ["X-Api-Key"] = conf.api_key,
-      ["Origin"] = originValue,
-    },
-  }, conf.connection_timeout)
+  reusable_params.headers["Origin"] = origin or "origin is missing"
 
-  return res, err
+  return botbye_http.request_uri(url, reusable_params, conf.connection_timeout)
 end
 
 return M

@@ -4,14 +4,12 @@ local M = {}
 
 function M.request_uri(url, opts, timeout)
   local httpc = http.new()
-  if timeout ~= nil then
-    httpc:set_timeout(timeout)
+  if timeout then
+    httpc:set_timeouts(timeout, timeout, timeout)
   end
 
-  local res, err = httpc:request_uri(url, opts)
-  httpc:set_keepalive()
-
-  return res, err
+  return httpc:request_uri(url, opts)
+  -- request_uri() already handles keepalive/close internally
 end
 
 return M
