@@ -1,6 +1,6 @@
 local constants = {
   pathEvaluate = "/api/v1/protect/evaluate",
-  module_version = "1.0.1",
+  module_version = "1.0.2",
   module_name = "OpenResty",
 }
 
@@ -60,24 +60,16 @@ local reusable_params = {
   headers = nil,  -- set in setConf
 }
 
-function M.evaluate(token, custom_fields)
-  local body = cjson.encode({
-    server_key = conf.botbye_server_key,
-    request = {
-      ip = ngx.var.remote_addr,
-      token = token or "token missing",
-      headers = flattenHeaders(ngx.req.get_headers()),
-      request_method = ngx.var.request_method,
-      request_uri = ngx.var.request_uri,
-    },
-    integration = {
-      module_name = constants.module_name,
-      module_version = constants.module_version,
-    },
-    custom_fields = custom_fields,
-  })
+local integration_info = {
+  module_name = constants.module_name,
+  module_version = constants.module_version,
+}
 
-  reusable_params.body = body
+local function doEvaluate(payload, token)
+  payload.server_key = conf.botbye_server_key
+  payload.integration = integration_info
+
+  reusable_params.body = cjson.encode(payload)
   reusable_params.headers = evaluate_headers
 
   local url = evaluate_base_url .. encode_uri(token or "")
@@ -102,6 +94,67 @@ function M.evaluate(token, custom_fields)
   end
 
   return res, nil, raw_body
+end
+
+--- Level 1: Bot validation (proxy, pre-authentication).
+--- Validates device token and returns bot score.
+--- No user context — only bot detection.
+---@param token string
+---@param custom_fields table|nil
+function M.botValidation(token, custom_fields)
+  return doEvaluate({
+    request = {
+      ip = ngx.var.remote_addr,
+      token = token or "token missing",
+      headers = flattenHeaders(ngx.req.get_headers()),
+      request_method = ngx.var.request_method,
+      request_uri = ngx.var.request_uri,
+    },
+    custom_fields = custom_fields,
+  }, token)
+end
+
+--- Level 2: Risk evaluation (middleware, post-authentication).
+--- Evaluates ATO/abuse risk using user context and dynamic metrics.
+--- Bot score comes from Level 1 result (botbye_result).
+---@param opts table { user: { account_id, username?, email?, phone? }, event_type: string, event_status: string ("SUCCESSFUL"|"FAILED"|"ATTEMPTED"), botbye_result?: string, custom_fields?: table }
+function M.riskEvaluation(opts)
+  return doEvaluate({
+    botbye_result = opts.botbye_result,
+    event = {
+      type = opts.event_type,
+      status = opts.event_status,
+    },
+    user = opts.user,
+    request = {
+      ip = ngx.var.remote_addr,
+      headers = flattenHeaders(ngx.req.get_headers()),
+    },
+    custom_fields = opts.custom_fields,
+  }, nil)
+end
+
+--- Combined Level 1+2: Bot validation + risk evaluation in a single call.
+--- Use when there is no separate proxy — the middleware validates the token
+--- and evaluates ATO/abuse risk in one request.
+---@param opts table { token: string, user: { account_id, username?, email?, phone? }, event_type: string, event_status: string ("SUCCESSFUL"|"FAILED"|"ATTEMPTED"), custom_fields?: table }
+function M.fullEvaluation(opts)
+  local token = opts.token
+  return doEvaluate({
+    event = {
+      type = opts.event_type,
+      status = opts.event_status,
+    },
+    user = opts.user,
+    request = {
+      ip = ngx.var.remote_addr,
+      token = token or "token missing",
+      headers = flattenHeaders(ngx.req.get_headers()),
+      request_method = ngx.var.request_method,
+      request_uri = ngx.var.request_uri,
+    },
+    custom_fields = opts.custom_fields,
+  }, token)
 end
 
 local function initRequest()
