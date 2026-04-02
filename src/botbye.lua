@@ -1,6 +1,6 @@
 local constants = {
   pathEvaluate = "/api/v1/protect/evaluate",
-  module_version = "1.0.2",
+  module_version = "1.0.3",
   module_name = "OpenResty",
 }
 
@@ -20,6 +20,9 @@ local evaluate_headers  -- initialized in setConf
 local evaluate_base_url -- initialized in setConf
 
 local empty_table = {}
+local err_evaluate_config_map = {
+  bypass_bot_validation = true,
+}
 
 local function makeErrorResponse(err_message)
   ngx.log(ngx.ERR, err_message)
@@ -30,6 +33,7 @@ local function makeErrorResponse(err_message)
     risk_score = 0.0,
     signals = empty_table,
     scores = empty_table,
+    config = err_evaluate_config_map,
     error = { message = err_message },
   }
 end
