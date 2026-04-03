@@ -1,6 +1,6 @@
 local constants = {
   pathEvaluate = "/api/v1/protect/evaluate",
-  module_version = "1.0.3",
+  module_version = "1.0.4",
   module_name = "OpenResty",
 }
 
@@ -20,7 +20,7 @@ local evaluate_headers  -- initialized in setConf
 local evaluate_base_url -- initialized in setConf
 
 local empty_table = {}
-local err_evaluate_config_map = {
+local bypass_validation_config = {
   bypass_bot_validation = true,
 }
 
@@ -33,7 +33,7 @@ local function makeErrorResponse(err_message)
     risk_score = 0.0,
     signals = empty_table,
     scores = empty_table,
-    config = err_evaluate_config_map,
+    config = bypass_validation_config,
     error = { message = err_message },
   }
 end
@@ -73,13 +73,22 @@ local function doEvaluate(payload, token)
   payload.server_key = conf.botbye_server_key
   payload.integration = integration_info
 
-  reusable_params.body = cjson.encode(payload)
+  local ok, encoded_body = pcall(cjson.encode, payload)
+  if not ok then
+    return makeErrorResponse("[BotBye] Failed to encode request payload: " .. tostring(encoded_body) .. ". Request skipped.")
+  end
+
+  reusable_params.body = encoded_body
   reusable_params.headers = evaluate_headers
 
   local url = evaluate_base_url .. encode_uri(token or "")
-  local res, err = botbye_http.request_uri(url, reusable_params, conf.botbye_connection_timeout)
+  local res, err
+  ok, res, err = pcall(botbye_http.request_uri, url, reusable_params, conf.botbye_connection_timeout)
+  if not ok then
+    return makeErrorResponse("[BotBye] Request failed while connecting to the API: " .. tostring(res) .. ". Request skipped.")
+  end
 
-  if not res or res.status >= 404 then
+  if not res or res.status == nil or res.status < 200 or res.status >= 300 then
     if err == "timeout" then
       return makeErrorResponse("[BotBye] API connection timed out, request skipped")
     end
@@ -89,8 +98,8 @@ local function doEvaluate(payload, token)
     )
   end
 
-  local raw_body = res.body
-  res, err = cjson_safe.decode(raw_body)
+  local raw_body = res.body -- json строка
+  res, err = cjson_safe.decode(raw_body) -- объект
   if not res then
     return makeErrorResponse(
       "[BotBye] Failed to decode API response: " .. (err or "unknown") .. ". Request skipped."
@@ -121,10 +130,9 @@ end
 --- Level 2: Risk evaluation (middleware, post-authentication).
 --- Evaluates ATO/abuse risk using user context and dynamic metrics.
 --- Bot score comes from Level 1 result (botbye_result).
----@param opts table { user: { account_id, username?, email?, phone? }, event_type: string, event_status: string ("SUCCESSFUL"|"FAILED"|"ATTEMPTED"), botbye_result?: string, custom_fields?: table }
+---@param opts table { user: { account_id, username?, email?, phone? }, event_type: string, event_status: string ("SUCCESSFUL"|"FAILED"|"ATTEMPTED"), botbye_result?: string, custom_fields?: table, config?: table }
 function M.riskEvaluation(opts)
-  return doEvaluate({
-    botbye_result = opts.botbye_result,
+  local payload = {
     event = {
       type = opts.event_type,
       status = opts.event_status,
@@ -135,7 +143,15 @@ function M.riskEvaluation(opts)
       headers = flattenHeaders(ngx.req.get_headers()),
     },
     custom_fields = opts.custom_fields,
-  }, nil)
+  }
+
+  if opts.botbye_result ~= nil and (type(opts.botbye_result) ~= "string" or not opts.botbye_result:match("^%s*$")) then
+    payload.botbye_result = opts.botbye_result
+  else
+    payload.config = bypass_validation_config
+  end
+
+  return doEvaluate(payload, nil)
 end
 
 --- Combined Level 1+2: Bot validation + risk evaluation in a single call.
