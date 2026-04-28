@@ -1,6 +1,6 @@
 local constants = {
   pathEvaluate = "/api/v1/protect/evaluate",
-  module_version = "1.0.5",
+  module_version = "2.0.0",
   module_name = "OpenResty",
 }
 
@@ -19,7 +19,6 @@ local M = {}
 local evaluate_headers  -- initialized in setConf
 local evaluate_base_url -- initialized in setConf
 
-local empty_table = {}
 local bypass_validation_config = {
   bypass_bot_validation = true,
 }
@@ -33,11 +32,7 @@ local function makeErrorResponse(err_message)
   ngx.log(ngx.ERR, err_message)
 
   return {
-    request_id = "00000000-0000-0000-0000-000000000000",
     decision = "ALLOW",
-    risk_score = 0.0,
-    signals = empty_table,
-    scores = empty_table,
     config = bypass_validation_config,
     error = { message = err_message },
   }
@@ -90,25 +85,29 @@ local function doEvaluate(payload, token)
   local res, err
   ok, res, err = pcall(botbye_http.request_uri, url, reusable_params, conf.botbye_connection_timeout)
   if not ok then
-    return makeErrorResponse("[BotBye] Request failed while connecting to the API: " .. tostring(res) .. ". Request skipped.")
+    ngx.log(ngx.WARN, "[BotBye] request pcall error: ", tostring(res))
+    return makeErrorResponse("connection error")
   end
 
   if not res or res.status == nil or res.status < 200 or res.status >= 300 then
     if err == "timeout" then
-      return makeErrorResponse("[BotBye] API connection timed out, request skipped")
+      return makeErrorResponse("timeout")
     end
 
-    return makeErrorResponse(
-      "[BotBye] Request failed while connecting to the API: " .. (err or tostring(res and res.status or "-")) .. ". Request skipped."
-    )
+    ngx.log(ngx.WARN, "[BotBye] request error: ", (err or tostring(res and res.status or "-")))
+    return makeErrorResponse("connection error")
   end
 
   local raw_body = res.body -- json строка
   res, err = cjson_safe.decode(raw_body) -- объект
   if not res then
-    return makeErrorResponse(
-      "[BotBye] Failed to decode API response: " .. (err or "unknown") .. ". Request skipped."
-    )
+    ngx.log(ngx.WARN, "[BotBye] JSON decode error: ", (err or "unknown"))
+    return makeErrorResponse("invalid json response")
+  end
+
+  -- Preserve empty arrays (cjson decodes [] as {} which re-encodes as object)
+  if res.signals and type(res.signals) == "table" and next(res.signals) == nil then
+    setmetatable(res.signals, cjson.array_mt)
   end
 
   return res, nil, raw_body
@@ -121,6 +120,7 @@ end
 ---@param custom_fields table|nil
 function M.botValidation(token, custom_fields)
   return doEvaluate({
+    type = "validate",
     request = {
       ip = ngx.var.remote_addr,
       token = token or "token missing",
@@ -138,6 +138,7 @@ end
 ---@param opts table { user: { account_id, username?, email?, phone? }, event_type: string, event_status: string ("SUCCESSFUL"|"FAILED"|"ATTEMPTED"), botbye_result?: string, custom_fields?: table, config?: table }
 function M.riskEvaluation(opts)
   local payload = {
+    type = "risk",
     event = {
       type = opts.event_type,
       status = opts.event_status,
@@ -166,6 +167,7 @@ end
 function M.fullEvaluation(opts)
   local token = opts.token
   return doEvaluate({
+    type = "full",
     event = {
       type = opts.event_type,
       status = opts.event_status,
