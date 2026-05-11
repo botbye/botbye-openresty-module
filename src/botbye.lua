@@ -1,6 +1,6 @@
 local constants = {
   pathEvaluate = "/api/v1/protect/evaluate",
-  module_version = "2.0.0",
+  module_version = "2.0.1",
   module_name = "OpenResty",
 }
 
