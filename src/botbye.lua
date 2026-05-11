@@ -70,8 +70,13 @@ local integration_info = {
 }
 
 local function doEvaluate(payload, token)
+  local encoded_token = encode_uri(token or "")
+
   payload.server_key = conf.botbye_server_key
   payload.integration = integration_info
+  if payload.request ~= nil then
+    payload.request.token = encoded_token
+  end
 
   local ok, encoded_body = pcall(cjson.encode, payload)
   if not ok then
@@ -81,7 +86,7 @@ local function doEvaluate(payload, token)
   reusable_params.body = encoded_body
   reusable_params.headers = evaluate_headers
 
-  local url = evaluate_base_url .. encode_uri(token or "")
+  local url = evaluate_base_url .. encoded_token
   local res, err
   ok, res, err = pcall(botbye_http.request_uri, url, reusable_params, conf.botbye_connection_timeout)
   if not ok then
@@ -123,7 +128,7 @@ function M.botValidation(token, custom_fields)
     type = "validate",
     request = {
       ip = ngx.var.remote_addr,
-      token = token or "token missing",
+      token = token,
       headers = flattenHeaders(ngx.req.get_headers()),
       request_method = ngx.var.request_method,
       request_uri = ngx.var.request_uri,
@@ -175,7 +180,7 @@ function M.fullEvaluation(opts)
     user = opts.user,
     request = {
       ip = ngx.var.remote_addr,
-      token = token or "token missing",
+      token = token,
       headers = flattenHeaders(ngx.req.get_headers()),
       request_method = ngx.var.request_method,
       request_uri = ngx.var.request_uri,
