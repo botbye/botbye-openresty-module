@@ -1,6 +1,6 @@
 local constants = {
   pathEvaluate = "/api/v1/protect/evaluate",
-  module_version = "2.0.0",
+  module_version = "2.1.0",
   module_name = "OpenResty",
 }
 
@@ -19,21 +19,11 @@ local M = {}
 local evaluate_headers  -- initialized in setConf
 local evaluate_base_url -- initialized in setConf
 
-local bypass_validation_config = {
-  bypass_bot_validation = true,
-}
-
-local BOTBYE_RESULT_HEADER = "X-Botbye-Result"
-local bypass_result_base64 = ngx.encode_base64(
-  cjson.encode({ config = bypass_validation_config })
-)
-
 local function makeErrorResponse(err_message)
   ngx.log(ngx.ERR, err_message)
 
   return {
     decision = "ALLOW",
-    config = bypass_validation_config,
     error = { message = err_message },
   }
 end
@@ -153,8 +143,6 @@ function M.riskEvaluation(opts)
 
   if opts.botbye_result ~= nil and (type(opts.botbye_result) ~= "string" or not opts.botbye_result:match("^%s*$")) then
     payload.botbye_result = opts.botbye_result
-  else
-    payload.config = bypass_validation_config
   end
 
   return doEvaluate(payload, nil)
@@ -219,31 +207,6 @@ local function initRequest()
   else
     ngx.log(ngx.INFO, "[BotBye] init-request: success, status = ", decoded.status)
   end
-end
-
-function M.encodeResult(evaluateRes)
-  local json = cjson_safe.encode(evaluateRes)
-  if json then
-    return ngx.encode_base64(json)
-  end
-  return nil
-end
-
---- Sets X-Botbye-Result header on the current request with the encoded
---- Level 1 evaluate result for propagation to Level 2.
---- Prefers rawBody (avoids re-serialization); falls back to encodeResult;
---- uses bypass default as last resort.
----@param evaluateRes table  evaluate response table
----@param rawBody string|nil  raw JSON body from doEvaluate (3rd return)
-function M.propagateResult(evaluateRes, rawBody)
-  local encoded = rawBody and ngx.encode_base64(rawBody) or M.encodeResult(evaluateRes)
-  ngx.req.set_header(BOTBYE_RESULT_HEADER, encoded or bypass_result_base64)
-end
-
---- Sets X-Botbye-Result header to bypass value (bot validation skipped).
---- Use when request should not be validated (excluded URI, service token, etc).
-function M.propagateBypass()
-  ngx.req.set_header(BOTBYE_RESULT_HEADER, bypass_result_base64)
 end
 
 local function rebuildDerivedState()

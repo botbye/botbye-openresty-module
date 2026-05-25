@@ -71,9 +71,6 @@ location / {
         if response.decision == "BLOCK" then
             ngx.exit(ngx.HTTP_FORBIDDEN)
         end
-
-        -- Propagate bot score to Level 2 via header
-        botbye.propagateResult(response, raw_body)
     }
 
     proxy_pass http://backend;
@@ -169,7 +166,6 @@ The response table contains:
 | `signals` | `table` | Triggered signal names (e.g., `BruteForce`, `ImpossibleTravel`) |
 | `challenge` | `table?` | Challenge type and token (when decision is `CHALLENGE`) |
 | `extra_data` | `table?` | Enriched device data (IP, country, browser, device, etc.) |
-| `config` | `table` | Config flags (`bypass_bot_validation`) |
 | `error` | `table?` | Error details (on fallback) |
 
 ```lua
@@ -183,20 +179,16 @@ response.extra_data.country      -- "US"
 
 ## Level 1 to Level 2 Propagation
 
-When using both levels, propagate the Level 1 result to Level 2 via the `X-Botbye-Result` header. This allows the platform to link both evaluations by `requestId` and combine bot score from Level 1 with risk scores from Level 2 into a single unified result:
+When using both levels, pass the Level 1 `botbye_result` to Level 2. This allows the platform to link both evaluations by `request_id` and combine bot score from Level 1 with risk scores from Level 2 into a single unified result:
 
 ```lua
--- Level 1 (proxy) — validate and forward result
-local response, _, raw_body = botbye.botValidation(token)
-botbye.propagateResult(response, raw_body)
+-- Level 1 (proxy) — validate and get result
+local l1_response = botbye.botValidation(token)
 
--- Or bypass validation entirely
-botbye.propagateBypass()
-
--- Level 2 (backend) — pass the header value as botbye_result
-local response = botbye.riskEvaluation({
+-- Pass botbye_result to Level 2 (e.g. via shared variable or header)
+local l2_response = botbye.riskEvaluation({
     -- ...
-    botbye_result = ngx.var.http_x_botbye_result,
+    botbye_result = l1_response.botbye_result,
 })
 ```
 
@@ -229,7 +221,7 @@ http {
 
 ## Error Handling
 
-The module follows a **fail-open** strategy. On network or server errors, evaluation functions return a bypass response (`decision = "ALLOW"` with `bypass_bot_validation = true`) instead of raising errors:
+The module follows a **fail-open** strategy. On network or server errors, evaluation functions return a default response (`decision = "ALLOW"` with error details) instead of raising errors:
 
 ```lua
 local response = botbye.riskEvaluation(opts)
@@ -264,13 +256,11 @@ http {
                 local botbye = require("botbye")
                 local token = ngx.var.arg_botbye_token or ""
 
-                local response, _, raw_body = botbye.botValidation(token)
+                local response = botbye.botValidation(token)
 
                 if response.decision == "BLOCK" then
                     ngx.exit(ngx.HTTP_FORBIDDEN)
                 end
-
-                botbye.propagateResult(response, raw_body)
             }
 
             proxy_pass http://backend;
