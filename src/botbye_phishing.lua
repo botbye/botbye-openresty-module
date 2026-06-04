@@ -1,8 +1,6 @@
 local conf = {
   endpoint = "https://verify.botbye.com",
-  account_id = "",
-  project_id = "",
-  api_key = "",
+  client_key = "",
   connection_timeout = 1000,
 }
 
@@ -16,21 +14,15 @@ local function assertNotBlank(key, value)
 end
 
 local image_base_url
+local image_png_url
+local image_svg_prefix
 
 local function rebuildDerivedState()
   local base = (conf.endpoint or ""):gsub("/+$", "")
-  image_base_url = base .. "/api/v1/phishing/" .. conf.account_id
-    .. "/projects/" .. conf.project_id .. "/image"
+  image_base_url = base .. "/api/v1/phishing/image/" .. conf.client_key
+  image_png_url = image_base_url .. "?format=png"
+  image_svg_prefix = image_base_url .. "?image_id="
 end
-
-local reusable_params = {
-  method = "GET",
-  keep_alive = true,
-  headers = {
-    ["X-Api-Key"] = "",
-    ["Origin"] = nil,
-  },
-}
 
 function M.setConf(input_conf)
   for k, v in pairs(input_conf) do
@@ -39,20 +31,28 @@ function M.setConf(input_conf)
   end
 
   rebuildDerivedState()
-  reusable_params.headers["X-Api-Key"] = conf.api_key
 end
 
 function M.fetchImage(origin, image_id)
   local url
   if image_id then
-    url = image_base_url .. "?image_id=" .. ngx.escape_uri(image_id) .. "&format=svg"
+    url = image_svg_prefix .. ngx.escape_uri(image_id) .. "&format=svg"
   else
-    url = image_base_url .. "?format=png"
+    url = image_png_url
   end
 
-  reusable_params.headers["Origin"] = origin or "origin is missing"
+  local params = {
+    method = "GET",
+    keepalive = true,
+    headers = {
+      ["Origin"] = origin or "origin is missing",
+    },
+  }
 
-  return botbye_http.request_uri(url, reusable_params, conf.connection_timeout)
+  return botbye_http.request_uri(url, params, conf.connection_timeout)
 end
+
+-- Ensure derived URLs are initialised even if setConf is never called.
+rebuildDerivedState()
 
 return M

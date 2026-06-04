@@ -153,6 +153,27 @@ local response = botbye.fullEvaluation({
 })
 ```
 
+### 5. Phishing Image Tracking
+
+The phishing tracking pixel is embedded on a protected site; when a phishing clone copies the
+markup, the pixel is requested with the clone's `Origin`, which lets BotBye record a phishing
+candidate.
+
+The project is identified by a public, browser-safe `client_key` in the URL path, so **no secret
+`api_key` is sent**. The page can even embed the image directly
+(`<img src="https://verify.botbye.com/api/v1/phishing/image/<client-key>.png">`).
+
+```lua
+local botbye_phishing = require("botbye_phishing")
+
+botbye_phishing.setConf({
+    endpoint = "https://verify.botbye.com",
+    client_key = "<public-client-key>",
+})
+
+local res, err = botbye_phishing.fetchImage(ngx.var.http_origin)
+```
+
 ## Response
 
 The response table contains:
