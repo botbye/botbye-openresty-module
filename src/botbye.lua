@@ -1,6 +1,6 @@
 local constants = {
   pathEvaluate = "/api/v1/protect/evaluate",
-  module_version = "2.1.0",
+  module_version = "2.2.1",
   module_name = "OpenResty",
 }
 
@@ -80,12 +80,10 @@ local function doEvaluate(payload, token)
   end
 
   if not res or res.status == nil or res.status < 200 or res.status >= 300 then
-    if err == "timeout" then
-      return makeErrorResponse("timeout")
-    end
-
     ngx.log(ngx.WARN, "[BotBye] request error: ", (err or tostring(res and res.status or "-")))
-    return makeErrorResponse("connection error")
+    -- "connection error" fallback: a non-2xx status (err == nil) or any
+    -- unrecognised transport error maps to the catch-all, never a raw lib string.
+    return makeErrorResponse(botbye_http.classifyError(err, "connection error"))
   end
 
   local raw_body = res.body -- json строка

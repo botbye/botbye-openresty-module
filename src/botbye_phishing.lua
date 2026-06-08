@@ -49,7 +49,12 @@ function M.fetchImage(origin, image_id)
     },
   }
 
-  return botbye_http.request_uri(url, params, conf.connection_timeout)
+  local res, err = botbye_http.request_uri(url, params, conf.connection_timeout)
+  if not res then
+    -- nil fallback: an unrecognised transport error passes through verbatim.
+    return nil, botbye_http.classifyError(err)
+  end
+  return res, err
 end
 
 -- Ensure derived URLs are initialised even if setConf is never called.
