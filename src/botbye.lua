@@ -1,7 +1,5 @@
 local constants = {
   pathEvaluate = "/api/v1/protect/evaluate",
-  module_version = "2.2.1",
-  module_name = "OpenResty",
 }
 
 local conf = {
@@ -13,6 +11,7 @@ local conf = {
 local cjson_safe = require("cjson.safe")
 local cjson = require("cjson")
 local botbye_http = require("botbye_http")
+local module_info = require("botbye_module_info")
 
 local M = {}
 
@@ -55,8 +54,8 @@ local reusable_params = {
 }
 
 local integration_info = {
-  module_name = constants.module_name,
-  module_version = constants.module_version,
+  module_name = module_info.name,
+  module_version = module_info.version,
 }
 
 local function doEvaluate(payload, token)
@@ -182,8 +181,8 @@ local function initRequest()
     body = body,
     headers = {
       ["Content-Type"] = "application/json",
-      ["Module-Name"] = constants.module_name,
-      ["Module-Version"] = constants.module_version,
+      ["Module-Name"] = module_info.name,
+      ["Module-Version"] = module_info.version,
     },
   }, conf.botbye_connection_timeout)
 
@@ -212,8 +211,8 @@ local function rebuildDerivedState()
   evaluate_headers = {
     Connection = "keep-alive",
     ["Content-Type"] = "application/json",
-    ["Module-Name"] = constants.module_name,
-    ["Module-Version"] = constants.module_version,
+    ["Module-Name"] = module_info.name,
+    ["Module-Version"] = module_info.version,
   }
 end
 

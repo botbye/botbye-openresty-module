@@ -19,7 +19,7 @@ luarocks install botbye-openresty
 
 ### Manual
 
-Copy `src/botbye.lua`, `src/botbye_http.lua`, and `src/botbye_phishing.lua` to your OpenResty Lua modules directory (e.g., `/usr/local/openresty/nginx/lua/`).
+Copy `src/botbye.lua`, `src/botbye_http.lua`, `src/botbye_module_info.lua`, and `src/botbye_phishing.lua` to your OpenResty Lua modules directory (e.g., `/usr/local/openresty/nginx/lua/`).
 
 ## Overview
 

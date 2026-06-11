@@ -21,6 +21,7 @@ build = {
   modules = {
     botbye = "src/botbye.lua",
     botbye_http = "src/botbye_http.lua",
+    botbye_module_info = "src/botbye_module_info.lua",
     botbye_phishing = "src/botbye_phishing.lua",
   },
 }

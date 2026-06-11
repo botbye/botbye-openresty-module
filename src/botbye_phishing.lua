@@ -6,6 +6,7 @@ local conf = {
 
 local M = {}
 local botbye_http = require("botbye_http")
+local module_info = require("botbye_module_info")
 
 local function assertNotBlank(key, value)
   if value == nil or (type(value) == "string" and value:match("^%s*$")) then
@@ -46,6 +47,8 @@ function M.fetchImage(origin, image_id)
     keepalive = true,
     headers = {
       ["Origin"] = origin or "origin is missing",
+      ["Module-Name"] = module_info.name,
+      ["Module-Version"] = module_info.version,
     },
   }
 
