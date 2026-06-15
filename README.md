@@ -160,17 +160,26 @@ markup, the pixel is requested with the clone's `Origin`, which lets BotBye reco
 candidate.
 
 The project is identified by a public, browser-safe `client_key` in the URL path, so **no secret
-`api_key` is sent**. The page can even embed the image directly
-(`<img src="https://verify.botbye.com/api/v1/phishing/image/<client-key>.png">`).
+`api_key` is sent**. The page can still embed the image directly in the browser
+(`<img src="https://verify.botbye.com/api/v1/phishing/image/<client-key>.png">`); when you instead
+proxy it through `fetchImage`, the module fetches the `/server` route and reports this module via the
+`Module-Name` / `Module-Version` headers, so the backend attributes the pixel to OpenResty even though
+the browser never reaches BotBye directly.
+
+`initRequest()` fires a one-off server-integration init handshake (worker-0 + `botbye_state`-guarded,
+like `botbye.initRequest()`); call it from `init_worker_by_lua_block`.
 
 ```lua
+-- in init_worker_by_lua_block (alongside botbye.initRequest()):
 local botbye_phishing = require("botbye_phishing")
 
 botbye_phishing.setConf({
     endpoint = "https://verify.botbye.com",
     client_key = "<public-client-key>",
 })
+botbye_phishing.initRequest()
 
+-- in the request handler:
 local res, err = botbye_phishing.fetchImage(ngx.var.http_origin)
 ```
 

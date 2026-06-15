@@ -17,12 +17,16 @@ end
 local image_base_url
 local image_png_url
 local image_svg_prefix
+local init_request_url
 
 local function rebuildDerivedState()
   local base = (conf.endpoint or ""):gsub("/+$", "")
-  image_base_url = base .. "/api/v1/phishing/image/" .. conf.client_key
+  -- The pixel is proxied server-side, so it hits the /server route: the backend reads the module from
+  -- the Module-Name/Module-Version headers (browser tags can't set headers) and marks SERVER_IMAGE_FETCHED.
+  image_base_url = base .. "/api/v1/phishing/image/" .. conf.client_key .. "/server"
   image_png_url = image_base_url .. "?format=png"
   image_svg_prefix = image_base_url .. "?image_id="
+  init_request_url = base .. "/api/v1/phishing/init-request/v1/" .. conf.client_key
 end
 
 function M.setConf(input_conf)
@@ -58,6 +62,55 @@ function M.fetchImage(origin, image_id)
     return nil, botbye_http.classifyError(err)
   end
   return res, err
+end
+
+-- Reports the server-side phishing integration to the backend (the SERVER_INTEGRATION_INIT
+-- get-started milestone). Best-effort: failures are logged and swallowed, never blocking the worker.
+local function sendPhishingInit()
+  local res, err = botbye_http.request_uri(init_request_url, {
+    method = "POST",
+    headers = {
+      ["Module-Name"] = module_info.name,
+      ["Module-Version"] = module_info.version,
+    },
+  }, conf.connection_timeout)
+
+  if not res then
+    ngx.log(ngx.WARN, "[BotBye] phishing init-request failed: ", err or "unknown error")
+    return
+  end
+
+  if res.status and (res.status < 200 or res.status >= 300) then
+    ngx.log(ngx.WARN, "[BotBye] phishing init-request: HTTP status = ", res.status)
+  else
+    ngx.log(ngx.INFO, "[BotBye] phishing init-request: success")
+  end
+end
+
+-- Fires the init handshake once per nginx instance. Call from `init_worker_by_lua`, mirroring
+-- `botbye.initRequest()`: guarded to worker 0 + a `botbye_state` shared-dict flag so concurrent
+-- workers don't each POST, then dispatched off the worker-init phase via a 0-delay timer.
+function M.initRequest()
+  if ngx.worker.id() == 0 then
+    local dict = ngx.shared and ngx.shared.botbye_state
+    if not dict then
+      ngx.log(ngx.WARN, "[BotBye] shared dict 'botbye_state' not configured, skipping phishing init guard")
+      return
+    end
+
+    local ok, err = dict:add("botbye:phishing_init_done", true)
+    if ok ~= true then
+      if ok == nil and err ~= nil then
+        ngx.log(ngx.WARN, "[BotBye] phishing init-request shared dict error: " .. tostring(err))
+      end
+      return
+    end
+
+    ngx.timer.at(0, function(premature)
+      if premature then return end
+      sendPhishingInit()
+    end)
+  end
 end
 
 -- Ensure derived URLs are initialised even if setConf is never called.
