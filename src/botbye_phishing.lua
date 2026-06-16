@@ -8,10 +8,8 @@ local M = {}
 local botbye_http = require("botbye_http")
 local module_info = require("botbye_module_info")
 
-local function assertNotBlank(key, value)
-  if value == nil or (type(value) == "string" and value:match("^%s*$")) then
-    error(key .. " can't be nil or blank.")
-  end
+local function isBlank(value)
+  return value == nil or (type(value) == "string" and value:match("^%s*$"))
 end
 
 local image_base_url
@@ -27,8 +25,15 @@ end
 
 function M.setConf(input_conf)
   for k, v in pairs(input_conf) do
-    assertNotBlank(k, v)
-    conf[k] = v
+    if conf[k] == nil then
+      -- Unknown key: log but don't crash worker init (fail-open, forward-compatible).
+      ngx.log(ngx.ERR, "[BotBye] ignoring unknown config key: ", tostring(k))
+    elseif isBlank(v) then
+      -- Blank value: log and keep the existing/default value — never crash worker init.
+      ngx.log(ngx.ERR, "[BotBye] ignoring blank config value for key: ", tostring(k))
+    else
+      conf[k] = v
+    end
   end
 
   rebuildDerivedState()
@@ -58,7 +63,12 @@ function M.fetchImage(origin, query)
     },
   }
 
-  local res, err = botbye_http.request_uri(url, params, conf.connection_timeout)
+  -- pcall: request_uri() can throw (bad URL/host); never let it surface as a 500 on the
+  -- pixel-serving path. Mirrors the protect flow in botbye.lua.
+  local ok, res, err = pcall(botbye_http.request_uri, url, params, conf.connection_timeout)
+  if not ok then
+    return nil, botbye_http.classifyError(tostring(res))
+  end
   if not res then
     -- nil fallback: an unrecognised transport error passes through verbatim.
     return nil, botbye_http.classifyError(err)

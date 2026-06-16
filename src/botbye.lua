@@ -46,13 +46,6 @@ local function encode_uri(uri)
   return (string.gsub(uri, "[^%a%d%-_%.!~%*'%(%);/%?:@&=%+%$,#]", uri_encode_lut))
 end
 
-local reusable_params = {
-  method = "POST",
-  keep_alive = true,
-  body = nil,     -- set per request
-  headers = nil,  -- set in setConf
-}
-
 local integration_info = {
   module_name = module_info.name,
   module_version = module_info.version,
@@ -67,12 +60,20 @@ local function doEvaluate(payload, token)
     return makeErrorResponse("[BotBye] Failed to encode request payload: " .. tostring(encoded_body) .. ". Request skipped.")
   end
 
-  reusable_params.body = encoded_body
-  reusable_params.headers = evaluate_headers
+  -- Build a fresh params table per request. A module-level reusable table is unsafe here:
+  -- request_uri() yields on connect/send, so a concurrent request running in another
+  -- coroutine could overwrite `body` between assignment and the actual send — leaking one
+  -- request's payload under another request.
+  local params = {
+    method = "POST",
+    keepalive = true,
+    body = encoded_body,
+    headers = evaluate_headers,
+  }
 
   local url = evaluate_base_url .. encode_uri(token or "")
   local res, err
-  ok, res, err = pcall(botbye_http.request_uri, url, reusable_params, conf.botbye_connection_timeout)
+  ok, res, err = pcall(botbye_http.request_uri, url, params, conf.botbye_connection_timeout)
   if not ok then
     ngx.log(ngx.WARN, "[BotBye] request pcall error: ", tostring(res))
     return makeErrorResponse("connection error")
@@ -207,7 +208,8 @@ local function initRequest()
 end
 
 local function rebuildDerivedState()
-  evaluate_base_url = conf.botbye_endpoint .. constants.pathEvaluate .. "?"
+  local base = (conf.botbye_endpoint or ""):gsub("/+$", "")
+  evaluate_base_url = base .. constants.pathEvaluate .. "?"
   evaluate_headers = {
     Connection = "keep-alive",
     ["Content-Type"] = "application/json",
@@ -218,11 +220,15 @@ end
 
 function M.setConf(input_conf)
   for k, v in pairs(input_conf) do
-    if v == nil or (type(v) == "string" and v:match("^%s*$")) then
-      error(k .. " can't be nil or blank.")
+    if conf[k] == nil then
+      -- Unknown key: log but don't crash worker init (fail-open, forward-compatible).
+      ngx.log(ngx.ERR, "[BotBye] ignoring unknown config key: ", tostring(k))
+    elseif v == nil or (type(v) == "string" and v:match("^%s*$")) then
+      -- Blank value: log and keep the existing/default value — never crash worker init.
+      ngx.log(ngx.ERR, "[BotBye] ignoring blank config value for key: ", tostring(k))
+    else
+      conf[k] = v
     end
-
-    conf[k] = v
   end
 
   rebuildDerivedState()
