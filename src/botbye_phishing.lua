@@ -15,8 +15,6 @@ local function assertNotBlank(key, value)
 end
 
 local image_base_url
-local image_png_url
-local image_svg_prefix
 local init_request_url
 
 local function rebuildDerivedState()
@@ -24,8 +22,6 @@ local function rebuildDerivedState()
   -- The pixel is proxied server-side, so it hits the /server route: the backend reads the module from
   -- the Module-Name/Module-Version headers (browser tags can't set headers) and marks SERVER_IMAGE_FETCHED.
   image_base_url = base .. "/api/v1/phishing/image/" .. conf.client_key .. "/server"
-  image_png_url = image_base_url .. "?format=png"
-  image_svg_prefix = image_base_url .. "?image_id="
   init_request_url = base .. "/api/v1/phishing/init-request/v1/" .. conf.client_key
 end
 
@@ -38,12 +34,18 @@ function M.setConf(input_conf)
   rebuildDerivedState()
 end
 
-function M.fetchImage(origin, image_id)
-  local url
-  if image_id then
-    url = image_svg_prefix .. ngx.escape_uri(image_id) .. "&format=svg"
-  else
-    url = image_png_url
+-- `query` (table|nil) is forwarded verbatim to the /server route — pass the browser's original
+-- pixel query (format, image_id, and the JS tag's module_name / module_version).
+function M.fetchImage(origin, query)
+  local url = image_base_url
+  if query then
+    local parts = {}
+    for k, v in pairs(query) do
+      parts[#parts + 1] = ngx.escape_uri(tostring(k)) .. "=" .. ngx.escape_uri(tostring(v))
+    end
+    if #parts > 0 then
+      url = image_base_url .. "?" .. table.concat(parts, "&")
+    end
   end
 
   local params = {

@@ -1,9 +1,9 @@
 package = "botbye-openresty"
-version = "2.2.1-0"
+version = "3.0.0-0"
 
 source = {
    url = "git://github.com/botbye/botbye-openresty-module.git",
-   tag = "v2.2.1",
+   tag = "v3.0.0",
 }
 
 description = {

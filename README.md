@@ -179,8 +179,9 @@ botbye_phishing.setConf({
 })
 botbye_phishing.initRequest()
 
--- in the request handler:
-local res, err = botbye_phishing.fetchImage(ngx.var.http_origin)
+-- in the request handler: forward the browser's original pixel query verbatim (it carries
+-- format / image_id and the JS tag's module_name / module_version).
+local res, err = botbye_phishing.fetchImage(ngx.var.http_origin, ngx.req.get_uri_args())
 ```
 
 ## Response
