@@ -12,6 +12,15 @@ local function isBlank(value)
   return value == nil or (type(value) == "string" and value:match("^%s*$"))
 end
 
+-- The Origin is unusable when absent, blank, or the literal "null" that browsers emit for opaque
+-- origins (and that a stringified nil produces)
+local function isMissingOrigin(origin)
+  if isBlank(origin) then
+    return true
+  end
+  return origin:match("^%s*(.-)%s*$"):lower() == "null"
+end
+
 local image_base_url
 local init_request_url
 
@@ -57,11 +66,15 @@ function M.fetchImage(origin, query)
     method = "GET",
     keepalive = true,
     headers = {
-      ["Origin"] = origin or "origin is missing",
       ["Module-Name"] = module_info.name,
       ["Module-Version"] = module_info.version,
     },
   }
+
+  -- Only forward Origin when there is a real value
+  if not isMissingOrigin(origin) then
+    params.headers["Origin"] = origin
+  end
 
   -- pcall: request_uri() can throw (bad URL/host); never let it surface as a 500 on the
   -- pixel-serving path. Mirrors the protect flow in botbye.lua.
