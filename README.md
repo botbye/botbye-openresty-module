@@ -8,6 +8,9 @@ BotBye goes beyond fixed bot/ATO checks. Risk dimensions and metrics are fully d
 
 - OpenResty (nginx + LuaJIT)
 - lua-resty-http 0.17.1
+- A CA trust store for the HTTPS endpoint — e.g. the system `ca-certificates` bundle, exposed to
+  the cosocket TLS client via `lua_ssl_trusted_certificate` at **`http` scope** (see
+  [TLS trust store](#tls-trust-store)). Without it the init handshake cannot complete (logged as a `WARN`).
 
 ## Installation
 
@@ -44,6 +47,10 @@ Add a shared dictionary for the init guard and configure the module:
 ```nginx
 http {
     lua_shared_dict botbye_state 1m;
+
+    # Required for the HTTPS init handshake — MUST be at http scope, see "TLS trust store" below.
+    lua_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+    lua_ssl_verify_depth 3;
 
     init_worker_by_lua_block {
         local botbye = require("botbye")
@@ -167,7 +174,8 @@ proxy it through `fetchImage`, the module fetches the `/server` route and report
 the browser never reaches BotBye directly.
 
 `initRequest()` fires a one-off server-integration init handshake (worker-0 + `botbye_state`-guarded,
-like `botbye.initRequest()`); call it from `init_worker_by_lua_block`.
+like `botbye.initRequest()`); call it from `init_worker_by_lua_block`. It needs the same http-scope
+[TLS trust store](#tls-trust-store) as `botbye.initRequest()`.
 
 ```lua
 -- in init_worker_by_lua_block (alongside botbye.initRequest()):
@@ -240,6 +248,10 @@ http {
     # Required for init guard (prevents duplicate init requests)
     lua_shared_dict botbye_state 1m;
 
+    # Required for the HTTPS init handshake — MUST be at http scope, see "TLS trust store" below.
+    lua_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+    lua_ssl_verify_depth 3;
+
     init_worker_by_lua_block {
         local botbye = require("botbye")
         botbye.setConf({
@@ -249,6 +261,35 @@ http {
     }
 }
 ```
+
+### TLS trust store
+
+`initRequest()` and every evaluation call reach the BotBye endpoint over HTTPS using
+`lua-resty-http`, which verifies the server certificate by default. OpenResty verifies against the
+CA bundle named by `lua_ssl_trusted_certificate`; without it the TLS handshake fails with OpenSSL
+error `20: unable to get local issuer certificate`.
+
+**Declare it at `http` scope, not only inside `server { }`.** `initRequest()` runs from
+`init_worker_by_lua` via `ngx.timer`, which executes outside any `server { }` block. A per-server
+`lua_ssl_trusted_certificate` therefore does **not** apply to it: the handshake gets no CA bundle
+and fails. Because the module is [fail-open](#error-handling), that failure is logged at `WARN`
+(`[BotBye] phishing init-request failed: 20: unable to get local issuer certificate`) rather than
+raised, so the one-off init request does not complete and the server does not receive the
+integration handshake until the guard is reset and it re-fires (see below).
+
+```nginx
+http {
+    # Inherited by init_worker/timer AND by every server{} block.
+    lua_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+    lua_ssl_verify_depth 3;
+    # ...
+}
+```
+
+The exact bundle path depends on the base image (`/etc/ssl/certs/ca-certificates.crt` on
+Debian/Ubuntu/Alpine with `ca-certificates` installed). To debug, raise the main-context
+`error_log` to `info` (the success/failure lines are logged below `error` level) and cold-restart
+the proxy so the `botbye_state` guard is reset and the handshake re-fires.
 
 ## Error Handling
 
@@ -269,6 +310,10 @@ end
 http {
     lua_shared_dict botbye_state 1m;
     lua_package_path "/usr/local/openresty/nginx/lua/?.lua;;";
+
+    # http scope so the init_worker/timer handshake can verify TLS (see "TLS trust store")
+    lua_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+    lua_ssl_verify_depth 3;
 
     init_worker_by_lua_block {
         local botbye = require("botbye")
