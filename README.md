@@ -163,13 +163,14 @@ local response = botbye.fullEvaluation({
 ### 5. Phishing Image Tracking
 
 The phishing tracking pixel is embedded on a protected site; when a phishing clone copies the
-markup, the pixel is requested with the clone's `Origin`, which lets BotBye record a phishing
-candidate.
+markup, the pixel is requested with the clone's `Origin` — or, where the pixel is embedded as
+`<object data="…svg">` and no `Origin` is sent at all, with its `Referer`. Either header names the
+page, which is what lets BotBye record a phishing candidate.
 
 The project is identified by a public, browser-safe `client_key` in the URL path, so **no secret
 `api_key` is sent**. The page can still embed the image directly in the browser
 (`<img src="https://verify.botbye.com/api/v1/phishing/image/<client-key>.png">`); when you instead
-proxy it through `fetchImage`, the module fetches the `/server` route and reports this module via the
+proxy it through `fetchCatcher`, the module fetches the `/server` route and reports it via the
 `Module-Name` / `Module-Version` headers, so the backend attributes the pixel to OpenResty even though
 the browser never reaches BotBye directly.
 
@@ -187,10 +188,46 @@ botbye_phishing.setConf({
 })
 botbye_phishing.initRequest()
 
--- in the request handler: forward the browser's original pixel query verbatim (it carries
--- format / image_id and the JS tag's module_name / module_version).
-local res, err = botbye_phishing.fetchImage(ngx.var.http_origin, ngx.req.get_uri_args())
+-- in the request handler: one function, `format` picks the asset ("png" or "svg" — required, anything
+-- else logs and returns `nil, "invalid format"`). Origin, Referer and the attribution params are read
+-- off the request being served, so you pass none of them (`origin` / `referer` in opts override the
+-- headers if you must).
+local res, err = botbye_phishing.fetchCatcher({
+    format = "png",
+})
+
+-- SVG names the URL it embeds as the nested pixel (point it at your own PNG location so that fetch
+-- proxies through your origin too — BotBye honours it only as an absolute http(s) URL). Required for
+-- "svg": missing or blank logs and returns `nil, "missing inner_png_url"`
+-- Omitting skip_execution means the script-less pixel; pass false to opt out. Both are ignored for png.
+local svg, svg_err = botbye_phishing.fetchCatcher({
+    format = "svg",
+    inner_png_url = "https://your-site.example/example.png",
+})
 ```
+
+`fetchCatcher` returns the raw `lua-resty-http` response, **not** the evaluate table documented below:
+
+| Value | Description |
+|---|---|
+| `res.status` | Upstream HTTP status |
+| `res.body` | Raw image bytes to relay back to the browser |
+| `res.headers` | Response headers (e.g. `Content-Type` — `image/png` or `image/svg+xml`) |
+| `err` | Set on transport failure, a bad `format`, or an SVG without `inner_png_url`, in which case `res` is `nil` |
+| _(third value)_ | Returned only alongside `err`: the gateway status the failure means — `504` for a timeout, `502` for anything else |
+
+A non-2xx upstream is not a transport failure — it arrives as `res` with `err` unset, so check
+`res.status` before relaying the body.
+
+Call it from a request phase (`rewrite` / `access` / `content`): `Origin` and `Referer` are read via
+`ngx.var`, which is unavailable in `init_worker_by_lua` and in timers — pass `origin` / `referer`
+explicitly if you ever call it from there.
+
+`format`, `image_id` and `executable` are set by the call and dropped from the forwarded query: the
+location you expose is public, so a forwarded query must not be able to redirect the nested pixel fetch
+or pick the SVG variant behind your back. `executable` is always sent, never omitted, so the variant
+never rides on the backend's default for a missing param; omitting `skip_execution` means the script-less
+SVG, and only an explicit `false` opts out.
 
 ## Response
 
