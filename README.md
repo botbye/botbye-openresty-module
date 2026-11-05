@@ -299,6 +299,61 @@ http {
 }
 ```
 
+### Several projects on one nginx
+
+When one nginx serves several BotBye projects, create a client per project with `botbye.new(conf)`
+instead of `setConf`. It takes the same keys as `setConf`, and the client has the same functions, called
+with `:`. `botbye_phishing.new(conf)` does the same for `client_key`.
+
+Create the clients once, in `init_worker_by_lua_block`, and pick one per request: by a variable set in
+each `server { }`, by `ngx.var.host`, or by any other request attribute. `initRequest()` is guarded per
+key, so call it on every client.
+
+```nginx
+http {
+    lua_shared_dict botbye_state 1m;
+
+    init_worker_by_lua_block {
+        local botbye = require("botbye")
+        local botbye_phishing = require("botbye_phishing")
+
+        botbye_projects = {
+            ["shop.example.com"]  = botbye.new({ botbye_server_key = "shop-server-key" }),
+            ["promo.example.com"] = botbye.new({ botbye_server_key = "promo-server-key" }),
+        }
+        for _, client in pairs(botbye_projects) do
+            client:initRequest()
+        end
+
+        botbye_phishing_projects = {
+            ["shop.example.com"] = botbye_phishing.new({ client_key = "shop-client-key" }),
+        }
+        for _, client in pairs(botbye_phishing_projects) do
+            client:initRequest()
+        end
+    }
+
+    server {
+        listen 80;
+        server_name shop.example.com promo.example.com;
+
+        location / {
+            access_by_lua_block {
+                local client = botbye_projects[ngx.var.host]
+                if client then
+                    local response = client:botValidation(ngx.var.arg_botbye_token or "")
+                    if response.decision == "BLOCK" then
+                        ngx.exit(ngx.HTTP_FORBIDDEN)
+                    end
+                end
+            }
+
+            proxy_pass http://backend;
+        }
+    }
+}
+```
+
 ### TLS trust store
 
 `initRequest()` and every evaluation call reach the BotBye endpoint over HTTPS using

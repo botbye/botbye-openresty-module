@@ -1,10 +1,14 @@
-local conf = {
+local defaults = {
   endpoint = "https://verify.botbye.com",
   client_key = "",
   connection_timeout = 1000,
 }
 
 local M = {}
+
+local Client = {}
+Client.__index = Client
+
 local botbye_http = require("botbye_http")
 local module_info = require("botbye_module_info")
 
@@ -33,19 +37,17 @@ local function isMissingHeaderValue(value)
   return trimmed:lower() == "null" or trimmed:find("[%z\1-\8\10-\31\127]") ~= nil
 end
 
-local image_base_url
-local init_request_url
-
-local function rebuildDerivedState()
+local function rebuildDerivedState(client)
+  local conf = client.conf
   local base = (conf.endpoint or ""):gsub("/+$", "")
   -- /server route: the backend reads the module from the headers, which browser tags cannot set.
-  image_base_url = base .. "/api/v1/phishing/image/" .. conf.client_key .. "/server"
-  init_request_url = base .. "/api/v1/phishing/init-request/v1/" .. conf.client_key
+  client.image_base_url = base .. "/api/v1/phishing/image/" .. conf.client_key .. "/server"
+  client.init_request_url = base .. "/api/v1/phishing/init-request/v1/" .. conf.client_key
 end
 
-function M.setConf(input_conf)
+local function applyConf(conf, input_conf)
   for k, v in pairs(input_conf) do
-    if conf[k] == nil then
+    if defaults[k] == nil then
       -- Unknown key: log, don't crash worker init.
       ngx.log(ngx.ERR, "[BotBye] ignoring unknown config key: ", tostring(k))
     elseif isBlank(v) then
@@ -55,8 +57,20 @@ function M.setConf(input_conf)
       conf[k] = v
     end
   end
+end
 
-  rebuildDerivedState()
+-- Creates a client with its own config, for nginx instances serving several BotBye projects. Keys and
+-- validation are the same as in `setConf`.
+function M.new(input_conf)
+  local conf = {}
+  for k, v in pairs(defaults) do
+    conf[k] = v
+  end
+  applyConf(conf, input_conf or {})
+
+  local client = setmetatable({ conf = conf }, Client)
+  rebuildDerivedState(client)
+  return client
 end
 
 -- get_uri_args() returns a table for a repeated param and true for a valueless one (`?flag`);
@@ -73,7 +87,7 @@ end
 -- deterministic by construction, and the keys are literals with nothing to escape.
 local URL_PARAMS = { "executable", "format", "image_id", "module_name", "module_version" }
 
-local function buildUrl(query)
+local function buildUrl(image_base_url, query)
   local parts = {}
   for _, key in ipairs(URL_PARAMS) do
     local v = query[key]
@@ -101,7 +115,7 @@ local function errorStatus(failure)
   return failure == "timeout" and 504 or 502
 end
 
-local function fetchAsset(origin, referer, query)
+local function fetchAsset(client, origin, referer, query)
   local params = {
     method = "GET",
     keepalive = true,
@@ -121,7 +135,8 @@ local function fetchAsset(origin, referer, query)
   end
 
   -- pcall: request_uri() can throw on a bad URL/host; never a 500 on the pixel path.
-  local ok, res, err = pcall(botbye_http.request_uri, buildUrl(query), params, conf.connection_timeout)
+  local ok, res, err = pcall(botbye_http.request_uri, buildUrl(client.image_base_url, query), params,
+    client.conf.connection_timeout)
   if not ok then
     local failure = botbye_http.classifyError(tostring(res))
     return nil, failure, errorStatus(failure)
@@ -181,7 +196,7 @@ end
 --                  returns `nil, "missing inner_png_url"`.
 --   skip_execution (boolean) ask for the script-less SVG (`executable=false`). Defaults to true, always
 --                  sent.
-function M.fetchCatcher(opts)
+function Client:fetchCatcher(opts)
   opts = opts or {}
 
   -- Logged and returned, not raised: this serves a location the browser is fetching an image from, and
@@ -209,18 +224,18 @@ function M.fetchCatcher(opts)
     query.executable = opts.skip_execution == false and "true" or "false"
   end
 
-  return fetchAsset(requestOrigin(opts), requestReferer(opts), query)
+  return fetchAsset(self, requestOrigin(opts), requestReferer(opts), query)
 end
 
 -- Reports the server-side phishing integration to the backend. Best-effort: never blocks the worker.
-local function sendPhishingInit()
+local function sendPhishingInit(init_request_url, connection_timeout)
   local res, err = botbye_http.request_uri(init_request_url, {
     method = "POST",
     headers = {
       ["Module-Name"] = module_info.name,
       ["Module-Version"] = module_info.version,
     },
-  }, conf.connection_timeout)
+  }, connection_timeout)
 
   if not res then
     ngx.log(ngx.WARN, "[BotBye] phishing init-request failed: ", err or "unknown error")
@@ -234,9 +249,9 @@ local function sendPhishingInit()
   end
 end
 
--- Once per nginx instance; call from `init_worker_by_lua`. Guarded to worker 0 plus a `botbye_state`
+-- Once per nginx instance and client key; call from `init_worker_by_lua`. Guarded to worker 0 plus a `botbye_state`
 -- flag so workers don't each POST, then dispatched via a 0-delay timer.
-function M.initRequest()
+function Client:initRequest()
   if ngx.worker.id() == 0 then
     local dict = ngx.shared and ngx.shared.botbye_state
     if not dict then
@@ -244,7 +259,7 @@ function M.initRequest()
       return
     end
 
-    local ok, err = dict:add("botbye:phishing_init_done", true)
+    local ok, err = dict:add("botbye:phishing_init_done:" .. tostring(self.conf.client_key), true)
     if ok ~= true then
       if ok == nil and err ~= nil then
         ngx.log(ngx.WARN, "[BotBye] phishing init-request shared dict error: " .. tostring(err))
@@ -252,14 +267,27 @@ function M.initRequest()
       return
     end
 
+    local init_request_url, connection_timeout = self.init_request_url, self.conf.connection_timeout
     ngx.timer.at(0, function(premature)
       if premature then return end
-      sendPhishingInit()
+      sendPhishingInit(init_request_url, connection_timeout)
     end)
   end
 end
 
--- Ensure derived URLs are initialised even if setConf is never called.
-rebuildDerivedState()
+local default_client = M.new()
+
+function M.setConf(input_conf)
+  applyConf(default_client.conf, input_conf)
+  rebuildDerivedState(default_client)
+end
+
+function M.fetchCatcher(opts)
+  return default_client:fetchCatcher(opts)
+end
+
+function M.initRequest()
+  default_client:initRequest()
+end
 
 return M
