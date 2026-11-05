@@ -1,11 +1,11 @@
 package = "botbye-openresty"
-version = "4.0.0-0"
+version = "4.1.0-0"
 
 source = {
    -- git+https, not git://: GitHub permanently disabled the unauthenticated git protocol in 2022, so a
    -- git:// URL makes `luarocks install botbye-openresty` unable to fetch the tag.
    url = "git+https://github.com/botbye/botbye-openresty-module.git",
-   tag = "v4.0.0",
+   tag = "v4.1.0",
 }
 
 description = {

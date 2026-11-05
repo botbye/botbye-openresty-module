@@ -2,7 +2,7 @@ local constants = {
   pathEvaluate = "/api/v1/protect/evaluate",
 }
 
-local conf = {
+local defaults = {
   botbye_server_key = "",
   botbye_endpoint = "https://verify.botbye.com",
   botbye_connection_timeout = 1000,
@@ -15,8 +15,8 @@ local module_info = require("botbye_module_info")
 
 local M = {}
 
-local evaluate_headers  -- initialized in setConf
-local evaluate_base_url -- initialized in setConf
+local Client = {}
+Client.__index = Client
 
 local function makeErrorResponse(err_message)
   ngx.log(ngx.ERR, err_message)
@@ -51,7 +51,8 @@ local integration_info = {
   module_version = module_info.version,
 }
 
-local function doEvaluate(payload, token)
+local function doEvaluate(client, payload, token)
+  local conf = client.conf
   payload.server_key = conf.botbye_server_key
   payload.integration = integration_info
 
@@ -68,10 +69,10 @@ local function doEvaluate(payload, token)
     method = "POST",
     keepalive = true,
     body = encoded_body,
-    headers = evaluate_headers,
+    headers = client.evaluate_headers,
   }
 
-  local url = evaluate_base_url .. encode_uri(token or "")
+  local url = client.evaluate_base_url .. encode_uri(token or "")
   local res, err
   ok, res, err = pcall(botbye_http.request_uri, url, params, conf.botbye_connection_timeout)
   if not ok then
@@ -106,8 +107,8 @@ end
 --- No user context — only bot detection.
 ---@param token string
 ---@param custom_fields table|nil
-function M.botValidation(token, custom_fields)
-  return doEvaluate({
+function Client:botValidation(token, custom_fields)
+  return doEvaluate(self, {
     type = "validate",
     request = {
       ip = ngx.var.remote_addr,
@@ -123,8 +124,8 @@ end
 --- Level 2: Risk evaluation (middleware, post-authentication).
 --- Evaluates ATO/abuse risk using user context and dynamic metrics.
 --- Bot score comes from Level 1 result (botbye_result).
----@param opts table { user: { account_id, username?, email?, phone? }, event_type: string, event_status: string ("SUCCESSFUL"|"FAILED"|"ATTEMPTED"), botbye_result?: string, custom_fields?: table, config?: table }
-function M.riskEvaluation(opts)
+---@param opts table { user: { account_id, username?, email?, phone? }, event_type: string, event_status: string ("SUCCESSFUL"|"FAILED"|"ATTEMPTED"), botbye_result?: string, custom_fields?: table }
+function Client:riskEvaluation(opts)
   local payload = {
     type = "risk",
     event = {
@@ -143,16 +144,16 @@ function M.riskEvaluation(opts)
     payload.botbye_result = opts.botbye_result
   end
 
-  return doEvaluate(payload, nil)
+  return doEvaluate(self, payload, nil)
 end
 
 --- Combined Level 1+2: Bot validation + risk evaluation in a single call.
 --- Use when there is no separate proxy — the middleware validates the token
 --- and evaluates ATO/abuse risk in one request.
 ---@param opts table { token: string, user: { account_id, username?, email?, phone? }, event_type: string, event_status: string ("SUCCESSFUL"|"FAILED"|"ATTEMPTED"), custom_fields?: table }
-function M.fullEvaluation(opts)
+function Client:fullEvaluation(opts)
   local token = opts.token
-  return doEvaluate({
+  return doEvaluate(self, {
     type = "full",
     event = {
       type = opts.event_type,
@@ -170,7 +171,7 @@ function M.fullEvaluation(opts)
   }, token)
 end
 
-local function initRequest()
+local function sendInitRequest(conf)
   ngx.log(ngx.INFO, "[BotBye] init-request: starting")
 
   local url = conf.botbye_endpoint:gsub("/+$", "") .. "/init-request/v1"
@@ -207,10 +208,10 @@ local function initRequest()
   end
 end
 
-local function rebuildDerivedState()
-  local base = (conf.botbye_endpoint or ""):gsub("/+$", "")
-  evaluate_base_url = base .. constants.pathEvaluate .. "?"
-  evaluate_headers = {
+local function rebuildDerivedState(client)
+  local base = (client.conf.botbye_endpoint or ""):gsub("/+$", "")
+  client.evaluate_base_url = base .. constants.pathEvaluate .. "?"
+  client.evaluate_headers = {
     Connection = "keep-alive",
     ["Content-Type"] = "application/json",
     ["Module-Name"] = module_info.name,
@@ -218,9 +219,9 @@ local function rebuildDerivedState()
   }
 end
 
-function M.setConf(input_conf)
+local function applyConf(conf, input_conf)
   for k, v in pairs(input_conf) do
-    if conf[k] == nil then
+    if defaults[k] == nil then
       -- Unknown key: log but don't crash worker init (fail-open, forward-compatible).
       ngx.log(ngx.ERR, "[BotBye] ignoring unknown config key: ", tostring(k))
     elseif v == nil or (type(v) == "string" and v:match("^%s*$")) then
@@ -230,11 +231,25 @@ function M.setConf(input_conf)
       conf[k] = v
     end
   end
-
-  rebuildDerivedState()
 end
 
-function M.initRequest()
+--- Creates a client with its own config, for nginx instances serving several BotBye projects.
+--- Keys and validation are the same as in `setConf`.
+---@param input_conf table|nil
+function M.new(input_conf)
+  local conf = {}
+  for k, v in pairs(defaults) do
+    conf[k] = v
+  end
+  applyConf(conf, input_conf or {})
+
+  local client = setmetatable({ conf = conf }, Client)
+  rebuildDerivedState(client)
+  return client
+end
+
+--- Once per nginx instance and server key; call from `init_worker_by_lua`.
+function Client:initRequest()
   if ngx.worker.id() == 0 then
     local dict = ngx.shared and ngx.shared.botbye_state
     if not dict then
@@ -242,7 +257,7 @@ function M.initRequest()
       return
     end
 
-    local ok, err = dict:add("botbye:init_done", true)
+    local ok, err = dict:add("botbye:init_done:" .. tostring(self.conf.botbye_server_key), true)
     if ok ~= true then
       if ok == nil and err ~= nil then
         ngx.log(ngx.WARN, "[BotBye] init-request shared dict error: " .. tostring(err))
@@ -250,11 +265,35 @@ function M.initRequest()
       return
     end
 
+    local conf = self.conf
     ngx.timer.at(0, function(premature)
       if premature then return end
-      initRequest()
+      sendInitRequest(conf)
     end)
   end
+end
+
+local default_client = M.new()
+
+function M.setConf(input_conf)
+  applyConf(default_client.conf, input_conf)
+  rebuildDerivedState(default_client)
+end
+
+function M.botValidation(token, custom_fields)
+  return default_client:botValidation(token, custom_fields)
+end
+
+function M.riskEvaluation(opts)
+  return default_client:riskEvaluation(opts)
+end
+
+function M.fullEvaluation(opts)
+  return default_client:fullEvaluation(opts)
+end
+
+function M.initRequest()
+  default_client:initRequest()
 end
 
 return M

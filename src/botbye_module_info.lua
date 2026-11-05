@@ -4,5 +4,5 @@
 -- module rather than being private to either.
 return {
   name = "OpenResty",
-  version = "4.0.0",
+  version = "4.1.0",
 }
